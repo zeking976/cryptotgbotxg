@@ -1,57 +1,107 @@
-# token_fetcher.py  (full file – just copy-paste)
-import requests
 import time
 from typing import List, Dict
+from gql import Client, gql
+from gql.transport.requests import RequestsHTTPTransport
+
+PUMP_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 
 class TokenFetcher:
-    def __init__(self, moralis_key: str):
-        self.moralis_key = moralis_key
-        self.last_fetch = 0
+    def __init__(self, api_key: str):
+        self.transport = RequestsHTTPTransport(
+            url="https://graphql.bitquery.io",
+            headers={"X-API-KEY": api_key}
+        )
+        self.client = Client(transport=self.transport, fetch_schema_from_transport=True)
+        self.last_time = time.time() - 900  # Start with 15 min window
 
-    # ── PUMP.FUN ─────────────────────────────────────────────────────
     def get_new_pump_tokens(self) -> List[Dict]:
-        url = "https://solana-gateway.moralis.io/token/mainnet/exchange/pumpfun/new"
-        headers = {"accept": "application/json", "X-API-Key": self.moralis_key}
-        try:
-            print("Fetching Pump.fun tokens...")
-            r = requests.get(url, headers=headers, timeout=5)
-            r.raise_for_status()
-            data = r.json().get("result", [])
-            print(f"Fetched {len(data)} Pump tokens")
-            return [
-                {
-                    "mint": t["tokenAddress"],
-                    "mcap": float(t.get("fullyDilutedValuation", 0)),
-                    "liq":  float(t.get("liquidity", 0))
+        since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.last_time))
+        query = gql("""
+            query NewPumpTokens($since: ISO8601DateTime) {
+                Solana {
+                    DEXTrades(
+                        where: {Transaction: {Block: {Time: {since: $since}}}, Trade: {Dex: {ProtocolFamily: {is: "pump"}}}}
+                        limit: {count: 10}
+                        orderBy: {descending: Block_Time}
+                    ) {
+                        Trade {
+                            Currency { MintAddress Symbol Name }
+                            Block { Time }
+                            Buy { AmountInUSD }
+                            Sell { AmountInUSD }
+                        }
+                        Transaction { Signer }  # Dev address
+                    }
                 }
-                for t in data
-            ]
+            }
+        """)
+        try:
+            print("Fetching new Pump.fun tokens...")
+            params = {"since": since}
+            result = self.client.execute(query, variable_values=params)
+            trades = result["Solana"]["DEXTrades"]
+            tokens = []
+            now = time.time()
+            for t in trades:
+                ts = time.mktime(time.strptime(t["Trade"]["Block"]["Time"], "%Y-%m-%dT%H:%M:%SZ"))
+                if now - ts > 15 * 60: continue  # <15 min
+                mint = t["Trade"]["Currency"]["MintAddress"]
+                tokens.append({
+                    "mint": mint,
+                    "symbol": t["Trade"]["Currency"]["Symbol"],
+                    "dev": t["Transaction"]["Signer"],
+                    "created_at": ts,
+                    "mcap": 0,  # Fetch later
+                    "liq": 0,
+                    "volume_usd": float(t["Trade"].get("Buy", {}).get("AmountInUSD", 0) + t["Trade"].get("Sell", {}).get("AmountInUSD", 0))
+                })
+            self.last_time = now
+            print(f"Fetched {len(tokens)} new Pump tokens")
+            return tokens
         except Exception as e:
-            print(f"Pump fetch error: {e}")
+            print(f"New Pump fetch error: {e}")
             return []
 
-    # ── RAYDIUM (NEW ENDPOINT) ───────────────────────────────────────
-    def get_new_ray_tokens(self) -> List[Dict]:
-        # Dexscreener “new pairs” endpoint (works today)
-        url = "https://api.dexscreener.com/latest/dex/search"
-        params = {"q": "raydium", "limit": 5}
+    def get_trending_pump_tokens(self) -> List[Dict]:
+        query = gql("""
+            query TrendingPumpTokens {
+                Solana {
+                    DEXTrades(
+                        where: {Trade: {Dex: {ProtocolFamily: {is: "pump"}}}, Transaction: {Block: {Time: {since: "2025-10-28T00:00:00Z"}}}}
+                        limit: {count: 10}
+                        orderBy: {descending: Trade_AmountInUSD}
+                    ) {
+                        Trade {
+                            Currency { MintAddress Symbol Name }
+                            Buy { AmountInUSD }
+                            Sell { AmountInUSD }
+                        }
+                        Transaction { Signer }
+                    }
+                }
+            }
+        """)
         try:
-            print("Fetching Raydium tokens...")
-            r = requests.get(url, params=params, timeout=5)
-            r.raise_for_status()
-            pairs = r.json().get("pairs", [])
-            new = []
-            for p in pairs:
-                if p.get("dexId", "").lower() != "raydium": continue
-                # pairAge is in seconds – keep only <5 min old
-                if p.get("pairAge", 999999) > 300: continue
-                new.append({
-                    "mint": p["baseToken"]["address"],
-                    "mcap": 0,                     # we’ll fetch via Jupiter later
-                    "liq":  float(p.get("liquidity", {}).get("usd", 0))
-                })
-            print(f"Fetched {len(new)} Ray tokens")
-            return new
+            print("Fetching trending Pump.fun tokens...")
+            result = self.client.execute(query)
+            trades = result["Solana"]["DEXTrades"]
+            # Dedup by mint
+            unique = {}
+            for t in trades:
+                mint = t["Trade"]["Currency"]["MintAddress"]
+                if mint not in unique:
+                    unique[mint] = {
+                        "mint": mint,
+                        "symbol": t["Trade"]["Currency"]["Symbol"],
+                        "dev": t["Transaction"]["Signer"],
+                        "created_at": time.time(),  # Approx
+                        "mcap": 0,
+                        "liq": 0,
+                        "volume_usd": float(t["Trade"].get("Buy", {}).get("AmountInUSD", 0) + t["Trade"].get("Sell", {}).get("AmountInUSD", 0))
+                    }
+            tokens = list(unique.values())
+            print(f"Fetched {len(tokens)} trending Pump tokens")
+            return tokens
         except Exception as e:
-            print(f"Ray fetch error: {e}")
+            print(f"Trending Pump fetch error: {e}")
             return []
