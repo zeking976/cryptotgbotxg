@@ -1,40 +1,41 @@
-import os
-import time
-import asyncio
+import os, time, asyncio
 from dotenv import load_dotenv
 from token_fetcher import TokenFetcher
 from filters import passes_filters
 from telegram_sender import TelegramSender
 
-load_dotenv('t.env')  # Your renamed file
+load_dotenv('t.env')
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHANNEL_ID = os.getenv("TARGET_CHANNEL_ID")
-MORALIS_KEY = os.getenv("MORALIS_API_KEY")
-RPC = os.getenv("RPC_ENDPOINT", "https://api.mainnet-beta.solana.com")
+BOT_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN")
+CHANNEL_ID  = os.getenv("TARGET_CHANNEL_ID")
+BITQUERY_KEY = os.getenv("BITQUERY_API_KEY")
+RPC         = os.getenv("RPC_ENDPOINT", "https://api.mainnet-beta.solana.com")
 
-if not all([BOT_TOKEN, CHANNEL_ID, MORALIS_KEY]):
-    raise ValueError(f"Missing env: Bot={bool(BOT_TOKEN)}, Channel={bool(CHANNEL_ID)}, Moralis={bool(MORALIS_KEY)}")
+if not all([BOT_TOKEN, CHANNEL_ID, BITQUERY_KEY]):
+    raise SystemExit("Missing env vars")
 
-print("🚀 Bot starting...")
-sender = TelegramSender(BOT_TOKEN, CHANNEL_ID)
-fetcher = TokenFetcher(MORALIS_KEY)
-seen_mints = set()
+print("🚀 Bitquery Pump Bot starting...")
+sender  = TelegramSender(BOT_TOKEN, CHANNEL_ID)
+fetcher = TokenFetcher(BITQUERY_KEY)
+seen    = set()
 
-async def main_loop():
+async def loop():
     while True:
-        all_tokens = fetcher.get_new_pump_tokens() + fetcher.get_new_ray_tokens()
-        print(f"Processing {len(all_tokens)} new tokens...")
+        # New + Trending
+        new_tokens = fetcher.get_new_pump_tokens()
+        trend_tokens = fetcher.get_trending_pump_tokens()
+        all_tokens = new_tokens + trend_tokens
+        print(f"Processing {len(all_tokens)} Pump candidates (new+trend)...")
         for t in all_tokens:
             mint = t["mint"]
-            if mint not in seen_mints and passes_filters(t):
-                print(f"✅ Token {mint} passed filters—sending!")
+            if mint in seen: continue
+            if passes_filters(t, RPC):
                 await sender.send_token(mint)
-                seen_mints.add(mint)
+                seen.add(mint)
             else:
                 print(f"⏭️ Skipped {mint}")
-        print("⏳ Sleeping 10s...")
-        time.sleep(10)
+        print("⏳ Sleeping 12s...")
+        await asyncio.sleep(12)
 
 if __name__ == "__main__":
-    asyncio.run(main_loop())
+    asyncio.run(loop())
