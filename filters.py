@@ -41,7 +41,7 @@ def passes_filters(mint: str, rpc: str) -> bool:
         return False
     mcap = stats["mcap"]
     liq = stats["liquidity"]
-    if not (10000 < mcap < 1000000):
+    if not (15000 < mcap < 1000000):
         return False
     if liq == 0 or mcap / liq <= 10:
         return False
