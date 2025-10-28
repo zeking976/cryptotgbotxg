@@ -4,7 +4,8 @@ Telegram bot for new Solana tokens from Pump.fun & Raydium.
 
 ## Setup
 1. `pip install -r requirements.txt`
-2. Copy `.env.example` to `.env` and fill values.
+2. Copy `.env.example` to `t.env` and fill values.
+------THIS IS IMPORTANT -----
 3. Add bot to channel as admin.
 4. `python main.py`
 
