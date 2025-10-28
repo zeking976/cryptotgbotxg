@@ -66,6 +66,6 @@ def passes_filters(t: Dict, rpc: str) -> bool:
 
     print(f"Filtering {mint}: MCAP=${mcap:.0f} LIQ=${liq:.0f} R={mcap/liq:.1f} VOL=${t.get('volume_usd', 0):.0f}")
 
-    if not (15000 < mcap < 700000): return False
+    if not (20000 < mcap < 700000): return False
     if liq == 0 or mcap / liq <= 10: return False
     return is_rug_filter(mint, rpc, t.get("dev"))
