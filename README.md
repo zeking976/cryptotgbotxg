@@ -9,7 +9,7 @@ Telegram bot for new Solana tokens from Pump.fun & Raydium.
 4. `python main.py`
 
 ## Filters
-- MCap: $10k - $1M
+- MCap: $17k - $1M
 - Liq/MCap Ratio: >10
 - Rug: Top holder <50% supply
 
