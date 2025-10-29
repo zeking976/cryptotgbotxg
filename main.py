@@ -10,7 +10,7 @@ BITQUERY_KEY = os.getenv("BITQUERY_API_KEY")
 RPC          = os.getenv("RPC_ENDPOINT", "https://api.mainnet-beta.solana.com")
 if not all([BOT_TOKEN, CHANNEL_ID, BITQUERY_KEY]):
     raise SystemExit("Missing env vars")
-print("Bitquery Pump Bot starting...🚀")
+print("Moralis Pump Bot starting...🚀")
 sender  = TelegramSender(BOT_TOKEN, CHANNEL_ID)
 fetcher = TokenFetcher(BITQUERY_KEY)
 seen    = set()
