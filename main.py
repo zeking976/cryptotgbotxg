@@ -13,7 +13,7 @@ RPC         = os.getenv("RPC_ENDPOINT", "https://api.mainnet-beta.solana.com")
 if not all([BOT_TOKEN, CHANNEL_ID]):
     raise SystemExit("Missing env vars")
 
-print("DexScreener Pump Bot starting...")
+print("DexScreener Pump Bot starting🚀...")
 sender  = TelegramSender(BOT_TOKEN, CHANNEL_ID)
 fetcher = TokenFetcher()
 seen    = set()
@@ -24,7 +24,7 @@ async def loop():
         trend_tokens = fetcher.get_trending_tokens()
         all_tokens = new_tokens + trend_tokens
 
-        print(f"Processing {len(all_tokens)} candidates...")
+        print(f"Processing {len(all_tokens)} candidates📊...")
         for t in all_tokens:
             mint = t["mint"]
             if mint in seen: continue
@@ -32,7 +32,7 @@ async def loop():
                 await sender.send_token(mint)
                 seen.add(mint)
             else:
-                print(f"Skipped {mint}")
+                print(f"🔃Skipped {mint}")
         print("Sleeping 12s...")
         await asyncio.sleep(12)
 
