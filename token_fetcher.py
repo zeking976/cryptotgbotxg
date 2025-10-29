@@ -23,7 +23,7 @@ class TokenFetcher:
                 created = t.get("createdAt")
                 if not created: continue
                 ts = time.mktime(time.strptime(created.split(".")[0], "%Y-%m-%dT%H:%M:%S"))
-                if now - ts > 15 * 60: continue  # <15 min old
+                if now - ts > 15 * 60: continue
                 tokens.append({
                     "mint": t["tokenAddress"],
                     "created_at": ts,
@@ -40,15 +40,26 @@ class TokenFetcher:
             return []
 
     def get_trending_pump_tokens(self) -> List[Dict]:
-        url = "https://solana-gateway.moralis.io/token/mainnet/exchange/pumpfun/top-gainers-losers?limit=10&timeframe=h1"
+        # Use /tokens + filter by pumpfun + sort by h1 volume
+        url = "https://solana-gateway.moralis.io/token/mainnet"
+        params = {
+            "limit": 50,
+            "exchange": "pumpfun"
+        }
         try:
-            print("Fetching trending Pump.fun tokens...")
-            r = requests.get(url, headers=self._headers(), timeout=10)
+            print("Fetching trending Pump.fun tokens (via /tokens)...")
+            r = requests.get(url, headers=self._headers(), params=params, timeout=10)
             r.raise_for_status()
             data = r.json().get("result", [])
+            # Sort by h1 volume descending
+            sorted_tokens = sorted(
+                [t for t in data if t.get("volume", {}).get("h1", 0) > 1000],  # Min $1k vol
+                key=lambda x: x.get("volume", {}).get("h1", 0),
+                reverse=True
+            )[:10]  # Top 10
             tokens = []
             seen = set()
-            for t in data:
+            for t in sorted_tokens:
                 mint = t["tokenAddress"]
                 if mint in seen: continue
                 seen.add(mint)
@@ -63,5 +74,5 @@ class TokenFetcher:
             print(f"Fetched {len(tokens)} trending Pump tokens")
             return tokens
         except Exception as e:
-            print(f"Trending Pump fetch error: {e}")
+            print(f"Trending fetch error: {e}")
             return []
