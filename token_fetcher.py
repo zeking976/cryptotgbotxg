@@ -2,77 +2,69 @@ import requests
 import time
 from typing import List, Dict
 
+CHAIN_ID = "solana"
+RAYDIUM_DEX = "raydium"  # For Pump.fun graduates
+
 class TokenFetcher:
-    def __init__(self, moralis_key: str):
-        self.moralis_key = moralis_key
-        self.last_time = int(time.time()) - 900  # 15 min ago
+    def __init__(self):
+        self.last_time = int(time.time()) - 900  # 15 min window
 
-    def _headers(self):
-        return {"accept": "application/json", "X-API-Key": self.moralis_key}
-
-    def get_new_pump_tokens(self) -> List[Dict]:
-        url = "https://solana-gateway.moralis.io/token/mainnet/exchange/pumpfun/new?limit=30"
+    def get_new_tokens(self) -> List[Dict]:
+        url = f"https://api.dexscreener.com/latest/dex/pairs/{CHAIN_ID}/{RAYDIUM_DEX}"
+        params = {"sortBy": "pairAge", "order": "asc", "perPage": 20}  # Newest first
         try:
-            print("Fetching new Pump.fun tokens...")
-            r = requests.get(url, headers=self._headers(), timeout=10)
+            print("Fetching new/early DexScreener tokens...")
+            r = requests.get(url, params=params, timeout=10)
             r.raise_for_status()
-            data = r.json().get("result", [])
+            pairs = r.json().get("pairs", [])
             now = time.time()
             tokens = []
-            for t in data:
-                created = t.get("createdAt")
-                if not created: continue
-                ts = time.mktime(time.strptime(created.split(".")[0], "%Y-%m-%dT%H:%M:%S"))
-                if now - ts > 15 * 60: continue
+            for p in pairs:
+                age = p.get("pairAge", 999999)  # Seconds
+                if age > 15 * 60 or age == 0: continue  # <15 min, active
+                mint = p["baseToken"]["address"]
                 tokens.append({
-                    "mint": t["tokenAddress"],
-                    "created_at": ts,
-                    "dev": t.get("creatorAddress", ""),
-                    "mcap": float(t.get("fullyDilutedValuation") or 0),
-                    "liq": float(t.get("liquidity") or 0),
-                    "volume_usd": float(t.get("volume", {}).get("h1", 0))
+                    "mint": mint,
+                    "created_at": now - age,
+                    "dev": "",  # Not in DexScreener; rug uses top holder
+                    "mcap": float(p.get("fdv", 0)),
+                    "liq": float(p.get("liquidity", {}).get("usd", 0)),
+                    "volume_usd": float(p.get("volume", {}).get("h24", 0))
                 })
-            print(f"Fetched {len(tokens)} new Pump tokens")
+            print(f"Fetched {len(tokens)} new/early tokens")
             self.last_time = int(now)
             return tokens
         except Exception as e:
-            print(f"New Pump fetch error: {e}")
+            print(f"New DexScreener fetch error: {e}")
             return []
 
-    def get_trending_pump_tokens(self) -> List[Dict]:
-        # Use /tokens + filter by pumpfun + sort by h1 volume
-        url = "https://solana-gateway.moralis.io/token/mainnet"
-        params = {
-            "limit": 50,
-            "exchange": "pumpfun"
-        }
+    def get_trending_tokens(self) -> List[Dict]:
+        url = f"https://api.dexscreener.com/latest/dex/search?q={CHAIN_ID}"
+        params = {"perPage": 50}  # Broader search
         try:
-            print("Fetching trending Pump.fun tokens (via /tokens)...")
-            r = requests.get(url, headers=self._headers(), params=params, timeout=10)
+            print("Fetching trending/active DexScreener tokens...")
+            r = requests.get(url, params=params, timeout=10)
             r.raise_for_status()
-            data = r.json().get("result", [])
-            # Sort by h1 volume descending
-            sorted_tokens = sorted(
-                [t for t in data if t.get("volume", {}).get("h1", 0) > 1000],  # Min $1k vol
-                key=lambda x: x.get("volume", {}).get("h1", 0),
-                reverse=True
-            )[:10]  # Top 10
+            pairs = r.json().get("pairs", [])
+            # Sort by 24h volume desc, filter active (>5k vol, >50 txns)
+            active_pairs = [p for p in pairs if float(p.get("volume", {}).get("h24", 0)) > 5000 and p.get("txns", {}).get("h24", {}).get("buys", 0) + p.get("txns", {}).get("h24", {}).get("sells", 0) > 50]
+            sorted_pairs = sorted(active_pairs, key=lambda p: float(p.get("volume", {}).get("h24", 0)), reverse=True)[:10]
             tokens = []
             seen = set()
-            for t in sorted_tokens:
-                mint = t["tokenAddress"]
+            for p in sorted_pairs:
+                mint = p["baseToken"]["address"]
                 if mint in seen: continue
                 seen.add(mint)
                 tokens.append({
                     "mint": mint,
                     "created_at": time.time(),
-                    "dev": t.get("creatorAddress", ""),
-                    "mcap": float(t.get("fullyDilutedValuation") or 0),
-                    "liq": float(t.get("liquidity") or 0),
-                    "volume_usd": float(t.get("volume", {}).get("h1", 0))
+                    "dev": "",
+                    "mcap": float(p.get("fdv", 0)),
+                    "liq": float(p.get("liquidity", {}).get("usd", 0)),
+                    "volume_usd": float(p.get("volume", {}).get("h24", 0))
                 })
-            print(f"Fetched {len(tokens)} trending Pump tokens")
+            print(f"Fetched {len(tokens)} trending/active tokens")
             return tokens
         except Exception as e:
-            print(f"Trending fetch error: {e}")
+            print(f"Trending DexScreener fetch error: {e}")
             return []
