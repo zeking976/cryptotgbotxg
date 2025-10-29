@@ -7,7 +7,7 @@ def get_dex_paid(mint: str) -> bool:
         r = requests.get(url, timeout=5)
         pairs = r.json().get("pairs", [])
         for p in pairs:
-            if p.get("infoUrl"):  # Paid = has infoUrl
+            if p.get("infoUrl"):
                 print(f"Paid DexScreener: {mint}")
                 return True
         print(f"No paid DexScreener: {mint}")
@@ -22,30 +22,33 @@ def is_rug_filter(mint: str, rpc: str) -> bool:
         r = requests.post(rpc.rstrip("/"), json=payload, timeout=5)
         top = r.json()["result"]["value"][0]["uiAmount"]
         if top > 0.5 * 1_000_000_000:
-            print(f"Rug: {mint} — top holder {top}")
+            print(f"Rug: {mint}")
             return False
         return True
     except Exception as e:
         print(f"Rug check failed: {e}")
-        return True  # Fail-open
+        return True
 
 def passes_filters(t: Dict, rpc: str) -> bool:
     mint = t["mint"]
     mcap, liq = t["mcap"], t["liq"]
 
-    # 1. Dex must be paid
-    if not get_dex_paid(mint):
+    # 1. MCAP range
+    if not (15000 < mcap < 700000):
+        print(f"MCAP out: ${mcap}")
         return False
 
-    # 2. MCAP range
-    if not (20000 < mcap < 700000):
-        print(f"MCAP out of range: ${mcap}")
-        return False
-
-    # 3. Ratio > 10
+    # 2. Ratio > 10
     if liq == 0 or mcap / liq <= 10:
         print(f"Low ratio: {mcap/liq:.1f}")
         return False
+
+    # 3. PAID DEX: Required only for trending (not new)
+    if not t.get("is_new", False):
+        if not get_dex_paid(mint):
+            return False
+    else:
+        print(f"New token — skipping paid check: {mint}")
 
     # 4. Rug check
     if not is_rug_filter(mint, rpc):
