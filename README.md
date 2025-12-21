@@ -52,11 +52,11 @@ Dynamic polling based on active wait-list size
 
 🔍 Filters (Current)
 
-MCAP: $19k – $1,000,000
+MCAP: $19k – $400k
 
 Liquidity: ≥ $10,000
 
-MCAP / LIQ Ratio: ≤ 6.1
+MCAP / LIQ Ratio: ≤ 8.0
 
 Volume: Strong 5-minute activity
 
