@@ -65,7 +65,7 @@ async def passes_filters(t: Dict) -> bool:
         or 0
     )
     # 1. Require early pump emergence
-    if vol_5m < 20000:
+    if vol_5m < 15000:
         print(f"LOW 5M VOLUME → {vol_5m}")
         return False
     # 2. Require positive 1-hour momentum
@@ -76,20 +76,16 @@ async def passes_filters(t: Dict) -> bool:
     # DO NOT TOUCH ANYTHING ELSE
     # =============================
     # MCAP RANGE
-    if not (19_000 <= mcap <= 1_000_000):
+    if not (19_000 <= mcap <= 400_000):
         print(f"MCAP OUT → ${mcap:,.0f}")
         return False
     # MCAP / LIQ RATIO
     ratio = mcap / liq if liq > 0 else 999
-    if ratio > 6.1:
+    if ratio > 8:
         print(f"RATIO TOO HIGH → {ratio:.1f}x")
         return False
     # MINIMUM LIQUIDITY
     if liq < 10_000:
         print(f"LIQ TOO LOW → ${liq:,.0f}")
-        return False
-    # RUG CHECK
-    if not is_rug_filter(mint):
-        print(f"RUG DETECTED → {mint[:8]}...")
         return False
     return True
