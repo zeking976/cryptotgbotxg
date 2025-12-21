@@ -4,6 +4,7 @@ import random
 import time
 import re
 import os
+import json
 from typing import Dict, Optional
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -19,6 +20,24 @@ if not os.path.exists(SESSION_FILE):
     raise SystemExit("session_string.txt missing!")
 with open(SESSION_FILE) as f:
     SESSION_STRING = f.read().strip()
+WAITLIST_FILE = "waitlist.json"
+POLL_INTERVAL = 1.01  # single source of truth
+def save_waitlist(waitlist: dict):
+    with open(WAITLIST_FILE, "w") as f:
+        json.dump(waitlist, f, indent=2)
+def load_waitlist():
+    if not os.path.exists(WAITLIST_FILE):
+        return {}  # no file → empty dict
+    try:
+        with open(WAITLIST_FILE, "r") as f:
+            content = f.read().strip()
+            if not content:  # empty file
+                return {}
+            return json.loads(content)
+    except json.JSONDecodeError:
+        # corrupted file → start fresh
+        return {}
+waitlist = load_waitlist()
 # === TELEGRAM SENDER ===
 from telegram_sender import TelegramSender
 sender = TelegramSender(BOT_TOKEN, TARGET_CHANNEL_ID)
@@ -138,7 +157,7 @@ async def get_token_data(mint: str) -> Dict:
         except Exception as e:
             print(f"DexScreener failed: {e}")
         # -----------------------------
-        # 2. JUPITER FALLBACK (PRIMARY SOURCE FOR VOLUME)
+        # 2. JUPITER FALLBACK
         # -----------------------------
         print("DexScreener weak → Trying Jupiter fallback...")
         try:
@@ -146,61 +165,93 @@ async def get_token_data(mint: str) -> Dict:
             async with session.get(jup_url, timeout=8) as r:
                 if r.ok:
                     data = await r.json()
-                    if data and len(data) > 0:
+                    if data:
                         t = data[0]
-                        if result["mcap"] == 0 and t.get("mcap"):
+                        # Market cap
+                        if result["mcap"] == 0 and t.get("mcap") is not None:
                             result["mcap"] = float(t["mcap"])
-                        if result["liq"] == 0 and t.get("liquidity"):
+                        # Liquidity
+                        if result["liq"] == 0 and t.get("liquidity") is not None:
                             result["liq"] = float(t["liquidity"])
-                        # Jupiter volumeChange = PRIMARY
-                        stats1h = t.get("stats1h", {})
-                        vol_change_1h = stats1h.get("volumeChange", 0)
-                        result["volume_change_1h"] = float(vol_change_1h) if vol_change_1h else 0.0
-                        print(f"Jupiter fallback → MCAP ({result['mcap']:,.0f} | Liq {result['liq']:,.0f})")
-                        print(f"Jupiter volumeChange → {result['volume_change_1h']:.2f}%")
+                        # 5m volume (absolute)
+                        stats5m = t.get("stats5m", {})
+                        buy_5m = float(stats5m.get("buyVolume", 0) or 0)
+                        sell_5m = float(stats5m.get("sellVolume", 0) or 0)
+                        result["volume_5m"] = buy_5m + sell_5m
+                        # 5m volume acceleration (%)
+                        result["volume_change_1h"] = float(
+                            stats5m.get("volumeChange", 0) or 0
+                        )
+                        print(
+                            f"Jupiter → MCAP {result['mcap']:,.0f} | "
+                            f"Liq {result['liq']:,.0f} | "
+                            f"5mVol {result['volume_5m']:,.0f} | "
+                            f"5mΔ {result['volume_change_1h']:.2f}%"
+                        )
         except Exception as e:
             print(f"Jupiter fallback failed: {e}")
-        # Final decision
-        if result["mcap"] == 0 and result["liq"] == 0:
-            print(f"ALL SOURCES FAILED → {mint[:8]}... (rugged or too new)")
-        else:
-            print(f"Data → MCAP ({result['mcap']:,.0f} | Liq {result['liq']:,.0f} | Final)")
-        return result
 async def monitor_waitlist():
     while True:
         active = sum(1 for v in waitlist.values() if not v["sent"])
-        await asyncio.sleep(max(1.02, active * 1.02))
+        await asyncio.sleep(max(POLL_INTERVAL, active * POLL_INTERVAL))
+        now = time.time()
+        dirty = False
         for mint, info in list(waitlist.items()):
             if info["sent"]:
                 continue
+            if now < info.get("next_check_ts", 0):
+                continue
+            # ---------- INIT SAFETY ----------
+            info.setdefault("added_ts", now)
+            info.setdefault("prev_mcap", info["launch_mcap"])
+            # ---------------------------------
+            elapsed = now - info["added_ts"]
+            # ---------- FIX 1 (SAFE EXPIRY) ----------
+            if elapsed > 120:
+                del waitlist[mint]   # REMOVE, don't poison
+                dirty = True
+                continue
+            # ----------------------------------------
             data = await get_token_data(mint)
             if not data or data.get("mcap", 0) == 0:
+                info["next_check_ts"] = now + POLL_INTERVAL
+                dirty = True
                 continue
-            # ---- PRICE SIGNAL ----
             current_mcap = data["mcap"]
             launch_mcap = info["launch_mcap"]
+            # ---------- FIX 2 (DYNAMIC THRESHOLD) ----------
+            if elapsed <= 20:
+                min_ratio = 1.05
+            elif elapsed <= 40:
+                min_ratio = 1.07
+            else:
+                min_ratio = 1.09
+            # ----------------------------------------------
+            # ---------- FIX 3 (REAL CONTINUATION) ----------
+            if current_mcap <= info["prev_mcap"]:
+                info["prev_mcap"] = current_mcap
+                info["next_check_ts"] = now + POLL_INTERVAL
+                dirty = True
+                continue
+            # ----------------------------------------------
             price_ratio = current_mcap / launch_mcap
-            # ---- VOLUME SIGNAL ----
-            vol_now = data.get("volume_5m", 0)
-            vol_prev = info.get("vol_prev", 0)
-            # update snapshot immediately
-            info["vol_prev"] = vol_now
-            # first tick, nothing to compare
-            if vol_prev == 0:
-                continue
-            vol_accel = vol_now / vol_prev
-            # ignore flat or decaying volume
-            if vol_accel < 1.10:
-                continue
-            # ---- COMBINED TRIGGER ----
-            if price_ratio >= 1.10 and vol_accel >= 1.25:
+            # ---------- FIX 4 (FINAL TRIGGER) ----------
+            if price_ratio >= min_ratio:
                 await sender.send_token(mint)
                 print(
                     f"PUMP → 🔥{mint} | "
                     f"MCAP {price_ratio:.2f}x | "
-                    f"VOL {vol_accel:.2f}x"
+                    f"t+{elapsed:.1f}s"
                 )
                 info["sent"] = True
+                dirty = True
+            else:
+                info["next_check_ts"] = now + POLL_INTERVAL
+                dirty = True
+            # -------------------------------------------
+            info["prev_mcap"] = current_mcap
+        if dirty:
+            save_waitlist(waitlist)
 # === TOKENFETCHER CLASS ===
 class TokenFetcher:
     def __init__(self):
@@ -216,7 +267,6 @@ class TokenFetcher:
             flood_sleep_threshold=60,
         )
         self.client.parse_mode = 'html'
-        # Register handler inside class
         @self.client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID))
         async def handler(event):
             text = (event.message.message or "").strip()
@@ -237,7 +287,9 @@ class TokenFetcher:
                 if mint not in waitlist:
                     waitlist[mint] = {
                         "launch_mcap": data["mcap"],
-                        "sent": False
+                        "sent": False,
+                        "added_ts": time.time(),
+                        "prev_mcap": data["mcap"],
                     }
                     print(f"WAITLIST ADD → {mint}")
     async def start(self):
