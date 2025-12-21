@@ -1,4 +1,5 @@
-# token_fetcher.py — FINAL 100% WORKING (Dec 2025) — NO DISCONNECTS, NO MISSED MESSAGESimport aiohttp
+# token_fetcher.py
+import aiohttp
 import asyncio
 import random
 import time
