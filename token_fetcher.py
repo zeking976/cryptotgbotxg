@@ -69,7 +69,8 @@ def extract_mint(msg) -> Optional[str]:
     full_text = re.sub(r'\s+', ' ', full_text).strip()
     candidates = set()
     # Raw mint
-    for m in re.finditer(r'\b([1-9A-HJ-NP-Za-km-z]{32,44})\b', full_text):
+    for m in re.finditer(r'\b([1-9A-HJ-NP-Za-km-z]{32,44})\b',
+full_text):
         candidates.add(m.group(1))
     # Links
     patterns = [
@@ -144,7 +145,8 @@ async def get_token_data(mint: str) -> Dict:
                             "mcap": float(mcap) if mcap else 0.0,
                             "liq": float(liq) if liq else 0.0,
                             "volume_5m": vol_m5,
-                            "has_paid_dex": bool(pair.get("info", {}).get("imageUrl")),                            "is_new": age_min < 30,
+                            "has_paid_dex": bool(pair.get("info", {}).get("imageUrl")),
+                            "is_new": age_min < 30,
                         })
                         print(
                             f"Data → MCAP ({result['mcap']:,.0f} | "
@@ -181,12 +183,12 @@ async def get_token_data(mint: str) -> Dict:
                         result["volume_5m"] = buy_5m + sell_5m
                         # 5m volume acceleration (%)
                         result["volume_change_1h"] = float(
-                            stats5m.get("volumeChange", 0) or 0
-                        )
+                            stats5m.get("volumeChange", 0) or 0                        )
                         print(
                             f"Jupiter → MCAP {result['mcap']:,.0f} | "
                             f"Liq {result['liq']:,.0f} | "
-                            f"5mVol {result['volume_5m']:,.0f} | "
+                            f"5mVol {result['volume_5m']:,.0f}
+| "
                             f"5mΔ {result['volume_change_1h']:.2f}%"
                         )
         except Exception as e:
@@ -220,6 +222,10 @@ async def monitor_waitlist():
                 continue
             current_mcap = data["mcap"]
             launch_mcap = info["launch_mcap"]
+            info["lowest_mcap"] = min(
+                info.get("lowest_mcap", launch_mcap),
+                current_mcap
+            )
             # ---------- FIX 2 (DYNAMIC THRESHOLD) ----------
             if elapsed <= 20:
                 min_ratio = 1.05
@@ -281,8 +287,7 @@ class TokenFetcher:
                 return
             data = await get_token_data(mint)
             if not data or data.get("mcap", 0) == 0:
-                print(f"NO DATA → {mint[:8]}... (retry later)")
-                return
+                print(f"NO DATA → {mint[:8]}... (retry later)")                return
             if await passes_filters(data):
                 seen_mints.add(mint)
                 if mint not in waitlist:
